@@ -44,6 +44,12 @@ cd dist
 ./voica recorder.wasm
 ```
 
+Releases are built by the **Release** workflow (`.github/workflows/`):
+push a `v*` tag or run it from the Actions tab, and it publishes a
+GitHub Release with `voica-linux-x64`, `voica-win32-x64.exe`,
+`voica-darwin-universal` (both Mac archs lipo-merged), and the one
+`recorder.wasm` that runs on all of them.
+
 ## Measured sizes (Linux x64, first build)
 
 - Host: **565,896 bytes** stripped (~640 KB unstripped)

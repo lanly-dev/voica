@@ -1,0 +1,106 @@
+name: Release
+
+# Build every host + the demo app and publish them as one GitHub Release.
+# Fire it by pushing a tag (v*) or from the Actions tab (workflow_dispatch,
+# which asks for the tag to create).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  host:
+    name: host (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            artifact: voica-linux-x64
+          - name: win32-x64
+            os: windows-latest
+            artifact: voica-win32-x64.exe
+          - name: darwin-universal
+            os: macos-latest
+            artifact: voica-darwin-universal
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch WAMR (pinned)
+        shell: bash
+        run: |
+          mkdir -p third_party
+          curl -sL "https://github.com/bytecodealliance/wasm-micro-runtime/archive/refs/tags/WAMR-2.4.6.tar.gz" | tar xz -C third_party
+          mv "third_party/wasm-micro-runtime-WAMR-2.4.6" third_party/wasm-micro-runtime
+
+      - name: Build host (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S host -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          strip -o voica-linux-x64 build/voica
+
+      - name: Build host (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S host -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          $exe = if (Test-Path build/Release/voica.exe) { "build/Release/voica.exe" } else { "build/voica.exe" }
+          Copy-Item $exe voica-win32-x64.exe
+
+      - name: Build host (macOS, both archs + lipo universal)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S host -B build-arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-arm64 -j
+          cmake -S host -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWAMR_BUILD_TARGET=X86_64
+          cmake --build build-x64 -j
+          lipo -create -output voica-darwin-universal build-arm64/voica build-x64/voica
+          strip voica-darwin-universal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  app:
+    name: app (recorder.wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lld (wasm linker for clang)
+        run: sudo apt-get update && sudo apt-get install -y lld
+      - name: Build recorder.wasm (built once — it runs on every host)
+        run: clang --target=wasm32 -nostdlib -O2 -Wl,--no-entry -Wl,--export=run -o recorder.wasm app/recorder.c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recorder.wasm
+          path: recorder.wasm
+
+  release:
+    name: release
+    needs: [host, app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ls -la release-files
+          gh release create "$TAG" release-files/* --title "Voica $TAG" --generate-notes
