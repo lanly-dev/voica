@@ -3,9 +3,16 @@ name: APE test
 # Build voica-all.com — the single Actually Portable Executable that
 # carries all three hosts + recorder.wasm inside it — then RUN that one
 # file on Linux, Windows, and macOS runners and check the WAV it makes.
-# Manual trigger only: this is the calibration for the one-binary route.
+# Trigger: manual dispatch, or a push to main touching the APE files
+# (the API token used day-to-day cannot dispatch workflows, but a push
+# fires it fine). This is the calibration for the one-binary route.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ape/**"
+      - ".github/workflows/ape-test.yml"
 
 permissions:
   contents: read
