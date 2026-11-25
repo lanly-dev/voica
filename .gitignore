@@ -2,3 +2,8 @@ third_party/
 build/
 dist/
 *.wav
+ape/payloads/
+ape/payloads.h
+ape/cosmocc/
+ape/cosmocc.zip
+ape/voica-all.com

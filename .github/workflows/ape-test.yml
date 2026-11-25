@@ -1,0 +1,183 @@
+name: APE test
+
+# Build voica-all.com — the single Actually Portable Executable that
+# carries all three hosts + recorder.wasm inside it — then RUN that one
+# file on Linux, Windows, and macOS runners and check the WAV it makes.
+# Manual trigger only: this is the calibration for the one-binary route.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: host (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux host on 22.04 on purpose: a host built on the newest
+          # Ubuntu demands the newest glibc and won't run on older
+          # systems (v0.0.1's linux host needs GLIBC_2.43).
+          - name: linux-x64
+            os: ubuntu-22.04
+            artifact: voica-linux-x64
+          - name: win32-x64
+            os: windows-latest
+            artifact: voica-win32-x64.exe
+          - name: darwin-universal
+            os: macos-latest
+            artifact: voica-darwin-universal
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch WAMR (pinned)
+        shell: bash
+        run: |
+          mkdir -p third_party
+          curl -sL "https://github.com/bytecodealliance/wasm-micro-runtime/archive/refs/tags/WAMR-2.4.6.tar.gz" | tar xz -C third_party
+          mv "third_party/wasm-micro-runtime-WAMR-2.4.6" third_party/wasm-micro-runtime
+
+      - name: Build host (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S host -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          strip -o voica-linux-x64 build/voica
+
+      - name: Build host (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S host -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          $exe = if (Test-Path build/Release/voica.exe) { "build/Release/voica.exe" } else { "build/voica.exe" }
+          Copy-Item $exe voica-win32-x64.exe
+
+      - name: Build host (macOS, both archs + lipo universal)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S host -B build-arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-arm64 -j
+          cmake -S host -B build-x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DWAMR_BUILD_TARGET=X86_64
+          cmake --build build-x64 -j
+          lipo -create -output voica-darwin-universal build-arm64/voica build-x64/voica
+          strip voica-darwin-universal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  app:
+    name: app (recorder.wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lld (wasm linker for clang)
+        run: sudo apt-get update && sudo apt-get install -y lld
+      - name: Build recorder.wasm (built once — it runs on every host)
+        run: clang --target=wasm32 -nostdlib -O2 -Wl,--no-entry -Wl,--export=run -o recorder.wasm app/recorder.c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recorder.wasm
+          path: recorder.wasm
+
+  build-ape:
+    name: build voica-all.com (APE)
+    needs: [host, app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect payloads (3 hosts + the wasm)
+        uses: actions/download-artifact@v4
+        with:
+          path: ape/payloads
+          merge-multiple: true
+
+      - name: Cache Cosmopolitan toolchain
+        uses: actions/cache@v4
+        with:
+          path: ape/cosmocc.zip
+          key: cosmocc-4.0.2
+
+      - name: Fetch Cosmopolitan toolchain
+        run: |
+          if [ ! -f ape/cosmocc.zip ]; then
+            curl -sL -o ape/cosmocc.zip "https://github.com/jart/cosmopolitan/releases/download/4.0.2/cosmocc-4.0.2.zip"
+          fi
+          unzip -q -o ape/cosmocc.zip -d ape/cosmocc
+
+      - name: Build the one binary
+        working-directory: ape
+        run: |
+          ls -lh payloads
+          python3 gen_payloads.py
+          ./cosmocc/bin/cosmocc -O2 -o voica-all.com launcher.c
+          ls -lh voica-all.com
+          head -c 8 voica-all.com | od -c | head -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voica-all.com
+          path: ape/voica-all.com
+
+  test:
+    name: run voica-all.com (${{ matrix.name }})
+    needs: [build-ape]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            python: python3
+          - name: windows
+            os: windows-latest
+            python: python
+          - name: macos-intel
+            os: macos-15-intel
+            python: python3
+          # The launcher in this test is x86_64-only, so Apple Silicon
+          # needs Rosetta — experimental until a fat APE is built.
+          - name: macos-arm-experimental
+            os: macos-latest
+            python: python3
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the one binary
+        uses: actions/download-artifact@v4
+        with:
+          name: voica-all.com
+
+      - name: Run it (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x voica-all.com
+          ./voica-all.com
+          ls -lh voica-out.wav
+
+      - name: Run it (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item voica-all.com voica-all.exe
+          .\voica-all.exe
+          Get-Item voica-out.wav
+
+      - name: Verify the WAV (1ch, 16 kHz, 16-bit, ~3 s)
+        run: ${{ matrix.python }} ape/verify_wav.py voica-out.wav
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wav-${{ matrix.name }}
+          path: voica-out.wav
+          if-no-files-found: ignore
