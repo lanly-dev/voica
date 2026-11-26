@@ -8,7 +8,7 @@
  * Nothing needs to be installed beforehand.
  */
 #include <errno.h>
-#include <fcntl.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,8 +91,13 @@ int main(int argc, char **argv) {
  * with spaces or quotes can no longer be mangled by re-quoting the
  * way the old system() launch mangled it). The host's exit status is
  * decoded and returned as-is: a host exit 1 comes back as 1, not as
- * the raw wait status (256) the old code leaked. If the host cannot
- * be started at all, the OS reason is printed and the exit is 127. */
+ * the raw wait status (256) the old code leaked. posix_spawn is
+ * used rather than a hand-rolled fork/execve because Cosmopolitan's
+ * Windows fork glue encodes a native child's exit code in the wait
+ * status in a way that decodes to 128+code; posix_spawn's child is
+ * created directly, so the status decodes straight. If the host
+ * cannot be started at all, the OS reason is printed and the exit
+ * is 127. */
 static int run_host(const char *host_path, const char *wasm_path,
                     int argc, char **argv) {
   char **child_argv = malloc(sizeof(char *) * ((size_t)argc + 3));
@@ -104,50 +109,19 @@ static int run_host(const char *host_path, const char *wasm_path,
   for (int i = 1; i < argc; i++) child_argv[i + 1] = argv[i];
   child_argv[argc + 1] = NULL;
 
-  /* Error pipe: the write end is close-on-exec, so a successful
-   * execve closes it and the parent reads EOF; a failed execve lets
-   * the child hand its errno back before it dies. */
-  int errpipe[2];
-  if (pipe(errpipe) != 0) {
+  pid_t pid;
+  int spawn_rc = posix_spawn(&pid, host_path, NULL, NULL,
+                             child_argv, environ);
+  free(child_argv);
+  if (spawn_rc != 0) {
     fprintf(stderr, "voica-all: cannot start host %s: %s\n",
-            host_path, strerror(errno));
-    free(child_argv);
+            host_path, strerror(spawn_rc));
     return 127;
   }
-  fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
-
-  pid_t pid = fork();
-  if (pid == 0) {
-    close(errpipe[0]);
-    execve(host_path, child_argv, environ);
-    int e = errno;
-    ssize_t ignored = write(errpipe[1], &e, sizeof e);
-    (void)ignored;
-    _exit(127);
-  }
-  if (pid < 0) {
-    fprintf(stderr, "voica-all: cannot start host %s: %s\n",
-            host_path, strerror(errno));
-    close(errpipe[0]);
-    close(errpipe[1]);
-    free(child_argv);
-    return 127;
-  }
-  close(errpipe[1]);
-  int child_errno = 0;
-  ssize_t got = read(errpipe[0], &child_errno, sizeof child_errno);
-  close(errpipe[0]);
 
   int status = 0;
   pid_t waited;
   while ((waited = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
-  }
-  free(child_argv);
-
-  if (got == (ssize_t)sizeof child_errno) {
-    fprintf(stderr, "voica-all: cannot start host %s: %s\n",
-            host_path, strerror(child_errno));
-    return 127;
   }
   if (waited < 0) return 1;
   if (WIFEXITED(status)) return WEXITSTATUS(status);
