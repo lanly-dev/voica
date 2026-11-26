@@ -26,7 +26,7 @@ static int write_file(const char *path, const unsigned char *data,
   return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
   /* --- detect OS --- */
   int is_win = 0, is_mac = 0;
   const char *osenv = getenv("OS");
@@ -74,9 +74,14 @@ int main(void) {
   }
 
   /* --- run the host on the app, from the caller's cwd so the
-         recorded voica-out.wav lands where the user ran us --- */
-  char cmd[2300];
-  snprintf(cmd, sizeof cmd, "\"%s\" \"%s\"", host_path, wasm_path);
+         recorded voica-out.wav lands where the user ran us.
+         Any arguments we were given are passed through to the host:
+           voica-all [seconds] [--out <path>] [--stream]          --- */
+  char cmd[4096];
+  int n = snprintf(cmd, sizeof cmd, "\"%s\" \"%s\"", host_path, wasm_path);
+  for (int i = 1; i < argc && n >= 0 && (size_t)n < sizeof cmd; i++) {
+    n += snprintf(cmd + n, sizeof cmd - (size_t)n, " \"%s\"", argv[i]);
+  }
   int rc = system(cmd);
   if (rc == -1) return 1;
   return rc == 0 ? 0 : 1;

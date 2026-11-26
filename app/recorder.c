@@ -14,8 +14,8 @@ int voica_record(const char *path, int path_len, int seconds);
 __attribute__((import_module("voica"), import_name("log")))
 void voica_log(const char *msg, int msg_len);
 
-static const char kMsgStart[] = "recording 3 seconds to voica-out.wav";
-static const char kMsgOk[] = "done — voica-out.wav written";
+static const char kMsgStart[] = "recording (default 3 seconds to voica-out.wav; host options can override both)";
+static const char kMsgOk[] = "done — recording written";
 static const char kMsgFail[] = "record failed";
 static const char kOutPath[] = "voica-out.wav";
 

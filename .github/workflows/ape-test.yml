@@ -184,6 +184,43 @@ jobs:
       - name: Verify the WAV (1ch, 16 kHz, 16-bit, ~3 s)
         run: ${{ matrix.python }} ape/verify_wav.py voica-out.wav
 
+      - name: Test specifying seconds (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ./voica-all.com 1 --out take1.wav
+          ${{ matrix.python }} ape/verify_wav.py take1.wav 0.9 1.1
+          ./voica-all.com --seconds 5 --out take5.wav
+          ${{ matrix.python }} ape/verify_wav.py take5.wav 4.9 5.1
+
+      - name: Test specifying seconds (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\voica-all.exe 1 --out take1.wav
+          ${{ matrix.python }} ape/verify_wav.py take1.wav 0.9 1.1
+          .\voica-all.exe --seconds 5 --out take5.wav
+          ${{ matrix.python }} ape/verify_wav.py take5.wav 4.9 5.1
+
+      - name: Test streaming record (Unix — SIGINT stops it cleanly)
+        if: runner.os != 'Windows'
+        run: |
+          ./voica-all.com --stream --out stream.wav &
+          pid=$!
+          sleep 2.5
+          kill -INT $pid
+          wait $pid
+          ${{ matrix.python }} ape/verify_wav.py stream.wav 1.0 4.0
+
+      - name: Test streaming record (Windows — hard kill; header must already be valid)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process .\voica-all.exe -ArgumentList "--stream --out stream.wav" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+          Stop-Process -Id $p.Id -Force
+          Start-Sleep -Seconds 1
+          ${{ matrix.python }} ape/verify_wav.py stream.wav 0.5 5.0
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
