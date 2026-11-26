@@ -213,7 +213,7 @@ jobs:
           echo "voica-all --bogus exited $rc"
           test "$rc" -eq 2
 
-      - name: Test exit-code propagation (Windows — diagnostic: print what host exit 2 comes back as)
+      - name: Test exit-code propagation (Windows — diagnostic print of the caller-visible code)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
