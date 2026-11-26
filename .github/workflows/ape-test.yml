@@ -205,6 +205,22 @@ jobs:
           .\voica-all.exe --seconds 5 --out take5.wav
           ${{ matrix.python }} ape/verify_wav.py take5.wav 4.9 5.1
 
+      - name: Test exit-code propagation (Unix — host exit 2 must come back as 2, not 1 or 256)
+        if: runner.os != 'Windows'
+        run: |
+          rc=0
+          ./voica-all.com --bogus 2>/dev/null || rc=$?
+          echo "voica-all --bogus exited $rc"
+          test "$rc" -eq 2
+
+      - name: Test exit-code propagation (Windows — host exit 2 must come back as 2, not 1 or 256)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\voica-all.exe --bogus 2>$null
+          if ($LASTEXITCODE -ne 2) { Write-Error "expected exit 2, got $LASTEXITCODE"; exit 1 }
+          Write-Host "voica-all --bogus exited 2 as expected"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

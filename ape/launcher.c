@@ -7,14 +7,19 @@
  * host + the wasm to a cache dir, and runs the host on the wasm.
  * Nothing needs to be installed beforehand.
  */
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "payloads.h"
+
+extern char **environ;
 
 static int write_file(const char *path, const unsigned char *data,
                       unsigned int len, int executable) {
@@ -25,6 +30,9 @@ static int write_file(const char *path, const unsigned char *data,
   if (executable) chmod(path, 0755);
   return 0;
 }
+
+static int run_host(const char *host_path, const char *wasm_path,
+                    int argc, char **argv);
 
 int main(int argc, char **argv) {
   /* --- detect OS --- */
@@ -74,15 +82,75 @@ int main(int argc, char **argv) {
   }
 
   /* --- run the host on the app, from the caller's cwd so the
-         recorded voica-out.wav lands where the user ran us.
-         Any arguments we were given are passed through to the host:
-           voica-all [seconds] [--out <path>]                     --- */
-  char cmd[4096];
-  int n = snprintf(cmd, sizeof cmd, "\"%s\" \"%s\"", host_path, wasm_path);
-  for (int i = 1; i < argc && n >= 0 && (size_t)n < sizeof cmd; i++) {
-    n += snprintf(cmd + n, sizeof cmd - (size_t)n, " \"%s\"", argv[i]);
+         recorded voica-out.wav lands where the user ran us --- */
+  return run_host(host_path, wasm_path, argc, argv);
+}
+
+/* Spawn the extracted host directly with an argv array — no shell
+ * command string, so arguments reach the host byte-for-byte (a path
+ * with spaces or quotes can no longer be mangled by re-quoting the
+ * way the old system() launch mangled it). The host's exit status is
+ * decoded and returned as-is: a host exit 1 comes back as 1, not as
+ * the raw wait status (256) the old code leaked. If the host cannot
+ * be started at all, the OS reason is printed and the exit is 127. */
+static int run_host(const char *host_path, const char *wasm_path,
+                    int argc, char **argv) {
+  char **child_argv = malloc(sizeof(char *) * ((size_t)argc + 3));
+  if (!child_argv) return 127;
+  child_argv[0] = (char *)host_path;
+  child_argv[1] = (char *)wasm_path;
+  /* Any arguments we were given are passed through to the host:
+       voica-all [seconds] [--out <path>] */
+  for (int i = 1; i < argc; i++) child_argv[i + 1] = argv[i];
+  child_argv[argc + 1] = NULL;
+
+  /* Error pipe: the write end is close-on-exec, so a successful
+   * execve closes it and the parent reads EOF; a failed execve lets
+   * the child hand its errno back before it dies. */
+  int errpipe[2];
+  if (pipe(errpipe) != 0) {
+    fprintf(stderr, "voica-all: cannot start host %s: %s\n",
+            host_path, strerror(errno));
+    free(child_argv);
+    return 127;
   }
-  int rc = system(cmd);
-  if (rc == -1) return 1;
-  return rc == 0 ? 0 : 1;
+  fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
+
+  pid_t pid = fork();
+  if (pid == 0) {
+    close(errpipe[0]);
+    execve(host_path, child_argv, environ);
+    int e = errno;
+    ssize_t ignored = write(errpipe[1], &e, sizeof e);
+    (void)ignored;
+    _exit(127);
+  }
+  if (pid < 0) {
+    fprintf(stderr, "voica-all: cannot start host %s: %s\n",
+            host_path, strerror(errno));
+    close(errpipe[0]);
+    close(errpipe[1]);
+    free(child_argv);
+    return 127;
+  }
+  close(errpipe[1]);
+  int child_errno = 0;
+  ssize_t got = read(errpipe[0], &child_errno, sizeof child_errno);
+  close(errpipe[0]);
+
+  int status = 0;
+  pid_t waited;
+  while ((waited = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+  }
+  free(child_argv);
+
+  if (got == (ssize_t)sizeof child_errno) {
+    fprintf(stderr, "voica-all: cannot start host %s: %s\n",
+            host_path, strerror(child_errno));
+    return 127;
+  }
+  if (waited < 0) return 1;
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+  return 1;
 }
