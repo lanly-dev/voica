@@ -11,7 +11,6 @@
  *   <seconds>        bare number: record this many seconds
  *   --seconds <n>    same, spelled out
  *   --out <path>     write the WAV here instead of the app's path
- *   --stream         record until stopped (Ctrl+C) instead of timed
  * The app must export `run()`. It may import from module "voica":
  *   record(path_ptr, path_len, seconds) -> i32   (0 = success)
  *   log(msg_ptr, msg_len)
@@ -74,15 +73,13 @@ static unsigned char *read_file(const char *path, long *out_size) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: voica <app.wasm> [seconds | --seconds <n>] [--out <path>] [--stream]\n");
+        fprintf(stderr, "usage: voica <app.wasm> [seconds | --seconds <n>] [--out <path>]\n");
         return 2;
     }
 
     /* Host-side recording options, applied through the bridge. */
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--stream") == 0) {
-            voica_bridge_set_stream(1);
-        } else if (strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
             voica_bridge_set_seconds_override(atoi(argv[++i]));
         } else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             voica_bridge_set_output_override(argv[++i]);

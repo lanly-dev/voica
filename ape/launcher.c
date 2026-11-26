@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
   /* --- run the host on the app, from the caller's cwd so the
          recorded voica-out.wav lands where the user ran us.
          Any arguments we were given are passed through to the host:
-           voica-all [seconds] [--out <path>] [--stream]          --- */
+           voica-all [seconds] [--out <path>]                     --- */
   char cmd[4096];
   int n = snprintf(cmd, sizeof cmd, "\"%s\" \"%s\"", host_path, wasm_path);
   for (int i = 1; i < argc && n >= 0 && (size_t)n < sizeof cmd; i++) {

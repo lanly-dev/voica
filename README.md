@@ -53,13 +53,7 @@ the overrides win over the app's request:
 ```sh
 ./voica recorder.wasm 10                    # record 10 seconds
 ./voica recorder.wasm --seconds 5 --out take5.wav
-./voica recorder.wasm --stream              # record until Ctrl+C
 ```
-
-`--stream` records until stopped. The WAV header is re-patched as
-audio lands, so the file is a valid WAV at any moment — even if the
-process is killed mid-take, you keep what was recorded up to the
-last half second.
 
 The same options work on the one-file APE build (`voica-all.com`,
 see the APE test workflow), which passes its arguments through to

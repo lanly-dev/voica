@@ -12,13 +12,8 @@ int voica_bridge_record(const char *outputPath, int seconds);
    - seconds override: record this many seconds instead of the app's
      request (-1 = no override, the default).
    - output override: write to this path instead of the app's path
-     (NULL = no override, the default).
-   - stream mode: record until stopped (SIGINT/SIGTERM, e.g. Ctrl+C)
-     instead of for a fixed number of seconds. The WAV header is kept
-     patched as recording goes, so the file is valid even if the
-     process is killed mid-take. */
+     (NULL = no override, the default). */
 void voica_bridge_set_seconds_override(int seconds);
 void voica_bridge_set_output_override(const char *path);
-void voica_bridge_set_stream(int enabled);
 
 #endif
