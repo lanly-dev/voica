@@ -213,13 +213,20 @@ jobs:
           echo "voica-all --bogus exited $rc"
           test "$rc" -eq 2
 
-      - name: Test exit-code propagation (Windows — diagnostic print of the caller-visible code)
+      - name: Test exit-code propagation (Windows — encoded by the APE platform layer)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           .\voica-all.exe --bogus 2>$null
-          Write-Host "voica-all --bogus exit code at caller: $LASTEXITCODE"
-          if ($LASTEXITCODE -eq 0) { Write-Error "expected a nonzero exit"; exit 1 }
+          $code = $LASTEXITCODE
+          Write-Host "voica-all --bogus exit code at caller: $code"
+          # Cosmopolitan 4.0.2's Windows wait/exit layer encodes the
+          # code: host exit 2 reaches the caller as 33280 — nonzero,
+          # deterministic, and distinct per host code, but not the raw
+          # 2 that Unix callers see. The host's stderr carries the
+          # actual reason, which is what callers should surface.
+          if ($code -ne 33280) { Write-Error "expected the encoded 33280, got $code"; exit 1 }
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()

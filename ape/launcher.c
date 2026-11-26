@@ -91,13 +91,14 @@ int main(int argc, char **argv) {
  * with spaces or quotes can no longer be mangled by re-quoting the
  * way the old system() launch mangled it). The host's exit status is
  * decoded and returned as-is: a host exit 1 comes back as 1, not as
- * the raw wait status (256) the old code leaked. posix_spawn is
- * used rather than a hand-rolled fork/execve because Cosmopolitan's
- * Windows fork glue encodes a native child's exit code in the wait
- * status in a way that decodes to 128+code; posix_spawn's child is
- * created directly, so the status decodes straight. If the host
- * cannot be started at all, the OS reason is printed and the exit
- * is 127. */
+ * the raw wait status (256) the old code leaked. Caveat, measured
+ * on the Windows runners with the pinned Cosmopolitan 4.0.2: that
+ * platform's wait/exit layer encodes the value on its way out, so
+ * a Windows caller sees an encoded form (host exit 2 arrives as
+ * 33280) — still nonzero, deterministic, and distinct per host
+ * code, and the host's own stderr carries the actual reason. Unix
+ * callers see the plain code. If the host cannot be started at
+ * all, the OS reason is printed and the exit is 127. */
 static int run_host(const char *host_path, const char *wasm_path,
                     int argc, char **argv) {
   char **child_argv = malloc(sizeof(char *) * ((size_t)argc + 3));
