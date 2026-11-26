@@ -12,6 +12,8 @@ on:
     branches: [main]
     paths:
       - "ape/**"
+      - "host/**"
+      - "app/**"
       - ".github/workflows/ape-test.yml"
 
 permissions:

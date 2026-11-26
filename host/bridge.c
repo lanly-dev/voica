@@ -35,7 +35,12 @@
 
 typedef struct {
     FILE *pFile;
-    ma_uint64 framesWritten;
+    /* Written by the capture callback, read by the record loop: the loop
+     * stops on this count, not on wall-clock time (see below). */
+    volatile ma_uint64 framesWritten;
+    /* Exact frame budget for this take (seconds * SAMPLE_RATE). 0 means
+     * no budget — the callback writes everything it is given. */
+    ma_uint64 targetFrames;
 } wav_writer;
 
 static void write_u32le(FILE *pFile, ma_uint32 value) {
@@ -90,7 +95,20 @@ static void on_data(ma_device *pDevice, void *pOutput, const void *pInput, ma_ui
     wav_writer *pWriter = (wav_writer *)pDevice->pUserData;
     (void)pOutput;
     if (pWriter != NULL && pInput != NULL) {
-        pWriter->framesWritten += fwrite(pInput, BLOCK_ALIGN, frameCount, pWriter->pFile);
+        /* Clamp the write to the remaining budget so the file holds
+         * exactly targetFrames, never a partial callback chunk more. */
+        ma_uint64 framesToWrite = frameCount;
+        if (pWriter->targetFrames > 0 && pWriter->framesWritten < pWriter->targetFrames) {
+            ma_uint64 remaining = pWriter->targetFrames - pWriter->framesWritten;
+            if (framesToWrite > remaining) {
+                framesToWrite = remaining;
+            }
+        } else if (pWriter->targetFrames > 0) {
+            framesToWrite = 0;
+        }
+        if (framesToWrite > 0) {
+            pWriter->framesWritten += fwrite(pInput, BLOCK_ALIGN, (size_t)framesToWrite, pWriter->pFile);
+        }
     }
 }
 
@@ -100,6 +118,7 @@ int voica_bridge_record(const char *outputPath, int seconds) {
 
     wav_writer writer;
     writer.framesWritten = 0;
+    writer.targetFrames = (ma_uint64)seconds * SAMPLE_RATE;
     writer.pFile = fopen(outputPath, "wb");
     if (writer.pFile == NULL) {
         fprintf(stderr, "voica: cannot open output file: %s\n", outputPath);
@@ -129,11 +148,20 @@ int voica_bridge_record(const char *outputPath, int seconds) {
         return 1;
     }
 
-    int remainingMs = seconds * 1000;
-    while (remainingMs > 0) {
-        int slice = remainingMs > 100 ? 100 : remainingMs;
-        sleep_ms((unsigned int)slice);
-        remainingMs -= slice;
+    /* Stop on FRAMES, not on wall-clock time. A capture device is free
+     * to deliver frames faster or slower than real time — the mic-less
+     * macOS runners deliver at ~24 kHz while the header promises 16 kHz,
+     * so the old sleep-for-N-seconds loop wrote 4.74 s / 4.50 s files for
+     * a 3 s take. Waiting for exactly seconds * 16000 frames makes the
+     * file exactly `seconds` long whatever rate the device runs at.
+     * The wall-clock cap (3x the take, plus a 2 s grace) is only a safety
+     * net so a stalled device can never hang the host forever; if it
+     * trips, the file is short but valid. */
+    int waitedMs = 0;
+    int timeoutMs = seconds * 3000 + 2000;
+    while (writer.framesWritten < writer.targetFrames && waitedMs < timeoutMs) {
+        sleep_ms(10);
+        waitedMs += 10;
     }
 
     ma_device_stop(&device);
