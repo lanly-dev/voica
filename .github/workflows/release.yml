@@ -1,6 +1,7 @@
 name: Release
 
-# Build every host + the demo app and publish them as one GitHub Release.
+# Build every host + the demo app and publish them as one GitHub Release,
+# including voica-all.com — the one APE binary with all hosts inside it.
 # Fire it by pushing a tag (v*) or from the Actions tab (workflow_dispatch,
 # which asks for the tag to create).
 on:
@@ -24,7 +25,11 @@ jobs:
       matrix:
         include:
           - name: linux-x64
-            os: ubuntu-latest
+            # Pinned older on purpose: a host built on ubuntu-latest
+            # requires the newest glibc (v0.0.1's needed GLIBC_2.43
+            # and would not run on glibc 2.39 systems). 22.04's glibc
+            # runs on far more machines.
+            os: ubuntu-22.04
             artifact: voica-linux-x64
           - name: win32-x64
             os: windows-latest
@@ -87,9 +92,49 @@ jobs:
           name: recorder.wasm
           path: recorder.wasm
 
+  build-ape:
+    name: build voica-all.com (APE)
+    needs: [host, app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect payloads (3 hosts + the wasm)
+        uses: actions/download-artifact@v4
+        with:
+          path: ape/payloads
+          merge-multiple: true
+
+      - name: Cache Cosmopolitan toolchain
+        uses: actions/cache@v4
+        with:
+          path: ape/cosmocc.zip
+          key: cosmocc-4.0.2
+
+      - name: Fetch Cosmopolitan toolchain
+        run: |
+          if [ ! -f ape/cosmocc.zip ]; then
+            curl -sL -o ape/cosmocc.zip "https://github.com/jart/cosmopolitan/releases/download/4.0.2/cosmocc-4.0.2.zip"
+          fi
+          unzip -q -o ape/cosmocc.zip -d ape/cosmocc
+
+      - name: Build the one binary
+        working-directory: ape
+        run: |
+          ls -lh payloads
+          python3 gen_payloads.py
+          ./cosmocc/bin/cosmocc -O2 -o voica-all.com launcher.c
+          ls -lh voica-all.com
+          head -c 8 voica-all.com | od -c | head -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voica-all.com
+          path: ape/voica-all.com
+
   release:
     name: release
-    needs: [host, app]
+    needs: [host, app, build-ape]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

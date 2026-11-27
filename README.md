@@ -62,8 +62,10 @@ the host it extracts.
 Releases are built by the **Release** workflow (`.github/workflows/`):
 push a `v*` tag or run it from the Actions tab, and it publishes a
 GitHub Release with `voica-linux-x64`, `voica-win32-x64.exe`,
-`voica-darwin-universal` (both Mac archs lipo-merged), and the one
-`recorder.wasm` that runs on all of them.
+`voica-darwin-universal` (both Mac archs lipo-merged), the one
+`recorder.wasm` that runs on all of them — and `voica-all.com`, the
+single APE binary with all three hosts and the wasm inside it:
+download that one file, run it on any OS, nothing to install.
 
 ## Measured sizes (Linux x64, first build)
 
